@@ -253,34 +253,43 @@ def doctor_selected_hour(update: Update, context: CallbackContext):
         logger.error("An error occurred in the doctor_selected_hour function: %s", e)
 
 
-
-
 def doctor_selected_day(update: Update, context: CallbackContext):
     try:
         query = update.callback_query
         query.answer()
-        context.user_data['selected_doctor'] = query.data.split('_')[1]
+        logger.info("Callback query received successfully.")
+
+        selected_doctor_id = query.data.split('_')[1]
+        context.user_data['selected_doctor'] = selected_doctor_id
+        logger.info("Selected doctor ID stored in user data.")
 
         # Получаем список ближайших 14 дней от текущей даты
         today = datetime.date.today()
         dates = [today + datetime.timedelta(days=i) for i in range(14)]
+        logger.info("List of next 14 days generated.")
 
         # Определяем праздничные дни для вашего региона
         my_holidays = holidays.Russia()
         workdays = [date for date in dates if date.weekday() < 5 and date not in my_holidays]
+        logger.info("List of working days without holidays generated.")
 
         # Проверяем доступность записей для каждого рабочего дня
         available_workdays = []
         for date in workdays:
             # Получаем список забронированных часов для данного дня и выбранного врача
-            booked_hours = get_booked_hours(date, doctor_id=context.user_data.get('selected_doctor'))
+            booked_hours = get_booked_hours(date, doctor_id=selected_doctor_id)
+            logger.info(f"Booked hours for {date}: {booked_hours}")
+
             # Если все часы забронированы, пропускаем этот день
             if len(booked_hours) == 6:
+                logger.info(f"All hours are booked for {date}. Skipping.")
                 continue
             available_workdays.append(date)
+        logger.info("Available workdays identified.")
 
         if not available_workdays:
             query.edit_message_text("К сожалению, все дни для записи на этого врача уже забронированы.")
+            logger.info("All days for the selected doctor are booked.")
             return
 
         # Создаем инлайн клавиатуру с кнопками для каждой доступной даты
@@ -290,8 +299,10 @@ def doctor_selected_day(update: Update, context: CallbackContext):
         reply_markup = InlineKeyboardMarkup(inline_keyboard)
 
         query.edit_message_text("Выберите дату для посещения врача:", reply_markup=reply_markup)
+        logger.info("Inline keyboard for selecting date created and sent to user.")
     except Exception as e:
         logger.error("An error occurred in the doctor_selected_day function: %s", e)
+        raise e  # Raising the exception to ensure it's not swallowed silently
 
 
 
