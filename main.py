@@ -150,8 +150,8 @@ def confirm_appointment(update: Update, context: CallbackContext) -> None:
     try:
         query = update.callback_query
         query.answer()
-
         selected_time = query.data.split('_')[2]  # Время в формате 'HH:MM'
+        selected_date = query.data.split('_')[1]  # Дата в формате 'YYYY-MM-DD'
 
 
         doctor_id = context.user_data.get('selected_doctor')
@@ -172,7 +172,7 @@ def confirm_appointment(update: Update, context: CallbackContext) -> None:
 
         # Создаем инлайн клавиатуру с кнопками "Да" и "Нет"
         inline_keyboard = [
-            [InlineKeyboardButton("Да", callback_data=f"confirm_appointment"),
+            [InlineKeyboardButton("Да", callback_data=f"confirm_appointment_{selected_date}_{selected_time}"),
              InlineKeyboardButton("Нет", callback_data=f"rollback")]
         ]
         reply_markup = InlineKeyboardMarkup(inline_keyboard)
