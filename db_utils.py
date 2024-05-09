@@ -314,7 +314,7 @@ def get_booked_hours(selected_date, doctor_id):
         cur.close()
         conn.close()
 
-        return [datetime.time(hour[0]) for hour in booked_hours]
+        return [datetime.time(int(hour[0])) for hour in booked_hours]
     except psycopg2.Error as e:
         logger.error("Error retrieving booked hours for selected date and doctor: %s", e)
         raise
