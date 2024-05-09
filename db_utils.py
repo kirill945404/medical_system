@@ -31,6 +31,17 @@ def execute_sql():
                 category VARCHAR(255) NOT NULL
             );
         """)
+        cur.execute("""
+                    CREATE TABLE IF NOT EXISTS medical_system.search_requests (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    doctor_id INTEGER NOT NULL,
+                    search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed BOOLEAN DEFAULT FALSE,
+                    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    modified TIMESTAMP
+                );
+                """)
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS medical_system.users (
@@ -77,6 +88,72 @@ def execute_sql():
         conn.close()
     except psycopg2.Error as e:
         logger.error("Error executing SQL queries: %s", e)
+        raise
+
+
+def add_search_request(user_id, doctor_id, selected_date):
+    try:
+        conn = connect_to_database()
+        cur = conn.cursor()
+
+        cur.execute(
+            "INSERT INTO medical_system.search_requests (user_id, doctor_id, search_date) VALUES (%s, %s, %s)",
+            (user_id, doctor_id, selected_date))
+
+        conn.commit()
+
+        cur.close()
+        conn.close()
+
+        logger.info("Search request added to the database: user_id=%s, doctor_id=%s, selected_date=%s",
+                    user_id, doctor_id, selected_date)
+    except psycopg2.Error as e:
+        logger.error("Error adding search request: %s", e)
+        raise
+
+
+def get_pending_search_requests():
+    try:
+        conn = connect_to_database()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, user_id, doctor_id, search_date
+            FROM medical_system.search_requests
+            WHERE completed = FALSE
+        """)
+
+        pending_requests = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        return [{'id': request[0], 'user_id': request[1], 'doctor_id': request[2], 'selected_date': request[3]} for
+                request in pending_requests]
+    except psycopg2.Error as e:
+        logger.error("Error retrieving pending search requests: %s", e)
+        raise
+
+
+def mark_request_completed(request_id):
+    try:
+        conn = connect_to_database()
+        cur = conn.cursor()
+
+        cur.execute("""
+            UPDATE medical_system.search_requests
+            SET completed = TRUE, modified = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (request_id,))
+
+        conn.commit()
+
+        cur.close()
+        conn.close()
+
+        logger.info("Search request marked as completed: request_id=%s", request_id)
+    except psycopg2.Error as e:
+        logger.error("Error marking search request as completed: %s", e)
         raise
 
 
@@ -148,6 +225,7 @@ def get_hospitals_by_category(category):
         logger.error("Error retrieving hospitals by category: %s", e)
         raise
 
+
 def get_doctors_by_category_and_hospital(category, hospital_id):
     try:
         conn = connect_to_database()
@@ -170,6 +248,7 @@ def get_doctors_by_category_and_hospital(category, hospital_id):
     except psycopg2.Error as e:
         logger.error("Error retrieving doctors by category and hospital: %s", e)
         raise
+
 
 def get_doctor_info(doctor_id):
     try:
@@ -195,6 +274,7 @@ def get_doctor_info(doctor_id):
         logger.error("Error retrieving doctor info: %s", e)
         raise
 
+
 def get_hospital_info(hospital_id):
     try:
         conn = connect_to_database()
@@ -219,6 +299,7 @@ def get_hospital_info(hospital_id):
         logger.error("Error retrieving hospital info: %s", e)
         raise
 
+
 def add_appointment(user_id, doctor_id, appointment_datetime):
     try:
         conn = connect_to_database()
@@ -238,6 +319,23 @@ def add_appointment(user_id, doctor_id, appointment_datetime):
     except psycopg2.Error as e:
         logger.error("Error adding appointment: %s", e)
         raise
+
+def get_chat_id_by_user_id(user_id):
+    try:
+        conn = connect_to_database()
+        cur = conn.cursor()
+
+        cur.execute("SELECT chat_id FROM medical_system.users WHERE id = %s", (user_id,))
+        chat_id = cur.fetchone()
+
+        cur.close()
+        conn.close()
+
+        return chat_id[0] if chat_id else None
+    except psycopg2.Error as e:
+        logger.error("Error retrieving chat ID by user ID: %s", e)
+        raise
+
 def get_user_id_by_chat_id(chat_id):
     try:
         conn = connect_to_database()
@@ -254,6 +352,8 @@ def get_user_id_by_chat_id(chat_id):
     except psycopg2.Error as e:
         logger.error("Error retrieving user id by chat id: %s", e)
         raise
+
+
 def get_booked_dates(doctor_id):
     try:
         conn = connect_to_database()
@@ -274,6 +374,8 @@ def get_booked_dates(doctor_id):
     except psycopg2.Error as e:
         logger.error("Error retrieving booked dates for doctor: %s", e)
         raise
+
+
 def get_user_appointments_info(user_id):
     try:
         conn = connect_to_database()
@@ -297,6 +399,28 @@ def get_user_appointments_info(user_id):
         logger.error("Error retrieving user appointments info: %s", e)
         raise
 
+def available_slots_found(selected_date, doctor_id):
+    try:
+        conn = connect_to_database()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT COUNT(*) 
+            FROM medical_system.appointments 
+            WHERE DATE(appointment_date) = %s AND doctor_id = %s AND is_active = TRUE
+        """, (selected_date, doctor_id))
+
+        appointment_count = cur.fetchone()[0]
+
+        cur.close()
+        conn.close()
+
+        # If there are available slots, return True
+        return appointment_count < 6  # Assuming there are maximum 6 appointments allowed per day
+
+    except psycopg2.Error as e:
+        logger.error("Error checking available slots: %s", e)
+        raise
 
 def get_booked_hours(selected_date, doctor_id):
     try:
@@ -306,7 +430,7 @@ def get_booked_hours(selected_date, doctor_id):
         cur.execute("""
             SELECT EXTRACT(HOUR FROM appointment_date) 
             FROM medical_system.appointments 
-            WHERE DATE(appointment_date) = %s AND doctor_id = %s
+            WHERE DATE(appointment_date) = %s AND doctor_id = %s AND is_active = TRUE
         """, (selected_date, doctor_id))
 
         booked_hours = cur.fetchall()
@@ -318,6 +442,8 @@ def get_booked_hours(selected_date, doctor_id):
     except psycopg2.Error as e:
         logger.error("Error retrieving booked hours for selected date and doctor: %s", e)
         raise
+
+
 def get_appointment_info(appointment_id):
     try:
         conn = connect_to_database()

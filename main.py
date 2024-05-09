@@ -3,7 +3,7 @@ from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKe
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler
 from db_utils import get_doctor_categories, execute_sql, add_user, get_hospitals_by_category, \
     get_doctors_by_category_and_hospital, get_doctor_info, get_hospital_info, add_appointment, get_user_id_by_chat_id, \
-    get_booked_hours, get_user_appointments_info, cancel_appointment_by_id, get_appointment_info
+    get_booked_hours, get_user_appointments_info, cancel_appointment_by_id, get_appointment_info, add_search_request
 import datetime
 import holidays
 
@@ -84,6 +84,7 @@ def search(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error("An error occurred in the search function: %s", e)
 
+
 def cancel_appointment(update: Update, context: CallbackContext) -> None:
     try:
         query = update.callback_query
@@ -146,6 +147,7 @@ def cancel_cancel_operation(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error("An error occurred in the cancel_cancel_operation function: %s", e)
 
+
 def confirm_appointment(update: Update, context: CallbackContext) -> None:
     try:
         query = update.callback_query
@@ -153,12 +155,9 @@ def confirm_appointment(update: Update, context: CallbackContext) -> None:
         selected_time = query.data.split('_')[2]  # Время в формате 'HH:MM'
         selected_date = query.data.split('_')[1]  # Дата в формате 'YYYY-MM-DD'
 
-
         doctor_id = context.user_data.get('selected_doctor')
         hospital_id = context.user_data.get('selected_hospital')
         chat_id = update.effective_user.id
-        user_id = get_user_id_by_chat_id(chat_id)  # Получаем id пользователя из базы данных
-
         # Получаем информацию о враче и больнице
         doctor_info = get_doctor_info(doctor_id)
         hospital_info = get_hospital_info(hospital_id)
@@ -180,6 +179,8 @@ def confirm_appointment(update: Update, context: CallbackContext) -> None:
         query.edit_message_text(message_text, reply_markup=reply_markup)
     except Exception as e:
         logger.error("An error occurred in the confirm_appointment function: %s", e)
+
+
 def confirm_appointment_addition(update: Update, context: CallbackContext) -> None:
     try:
         query = update.callback_query
@@ -220,7 +221,6 @@ def confirm_appointment_addition(update: Update, context: CallbackContext) -> No
 
     except Exception as e:
         logger.error("An error occurred in the confirm_appointment_addition function: %s", e)
-
 
 
 def doctor_selected_hour(update: Update, context: CallbackContext):
@@ -269,25 +269,21 @@ def doctor_selected_day(update: Update, context: CallbackContext):
         my_holidays = holidays.Russia()
         workdays = [date for date in dates if date.weekday() < 5 and date not in my_holidays]
 
-        # Проверяем доступность записей для каждого рабочего дня
-        available_workdays = []
+        # Создаем инлайн клавиатуру с кнопками для каждой доступной даты
+        inline_keyboard = []
         for date in workdays:
             # Получаем список забронированных часов для данного дня и выбранного врача
             booked_hours = get_booked_hours(date, doctor_id=selected_doctor_id)
 
-            # Если все часы забронированы, пропускаем этот день
+            # Если все часы забронированы, добавляем кнопку с уведомлением
             if len(booked_hours) == 6:
                 continue
-            available_workdays.append(date)
+                inline_keyboard.append([InlineKeyboardButton(date.strftime('%d %B (нет свободных талонов)'),
+                                                             callback_data=f"notify_{date.strftime('%Y-%m-%d')}")])
+            else:
+                inline_keyboard.append([InlineKeyboardButton(date.strftime('%d %B'),
+                                                             callback_data=f"day_{date.strftime('%Y-%m-%d')}")])
 
-        if not available_workdays:
-            query.edit_message_text("К сожалению, все дни для записи на этого врача уже забронированы.")
-            return
-
-        # Создаем инлайн клавиатуру с кнопками для каждой доступной даты
-        inline_keyboard = [
-            [InlineKeyboardButton(date.strftime('%d %B'), callback_data=f"day_{date.strftime('%Y-%m-%d')}")] for date in
-            available_workdays]
         reply_markup = InlineKeyboardMarkup(inline_keyboard)
 
         query.edit_message_text("Выберите дату для посещения врача:", reply_markup=reply_markup)
@@ -295,6 +291,50 @@ def doctor_selected_day(update: Update, context: CallbackContext):
         logger.error("An error occurred in the doctor_selected_day function: %s", e)
         raise e
 
+
+def notify_selected_day(update: Update, context: CallbackContext):
+    try:
+        query = update.callback_query
+        query.answer()
+
+        selected_date = query.data.split('_')[1]
+        selected_date = datetime.datetime.strptime(selected_date, '%Y-%m-%d').date()
+
+        doctor_info = get_doctor_info(context.user_data.get('selected_doctor'))
+
+        # Создаем инлайн клавиатуру с кнопками "Искать" и "Назад"
+        inline_keyboard = [
+            [InlineKeyboardButton("Искать", callback_data=f"search_{selected_date.strftime('%Y-%m-%d')}"),
+             InlineKeyboardButton("Назад", callback_data="back")]]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard)
+
+        query.edit_message_text(
+            f"Сейчас на {selected_date.strftime('%d %B')} для {doctor_info['first_name']} {doctor_info['last_name']} нет свободных талонов, но они еще могут появиться, если вы нажмете кнопку \"Искать\", то я начну проверять наличие свободных талонов на эту дату каждые 2 минуты и обязательно сообщу вам, когда они появятся!",
+            reply_markup=reply_markup)
+    except Exception as e:
+        logger.error("An error occurred in the notify_selected_day function: %s", e)
+        raise e
+
+
+def search_for_available_slots(update: Update, context: CallbackContext):
+    try:
+        query = update.callback_query
+        query.answer()
+
+        selected_date = query.data.split('_')[1]  # Extract the selected date from the callback data
+        selected_date = datetime.datetime.strptime(selected_date, '%Y-%m-%d').date()
+
+        doctor_id = context.user_data.get('selected_doctor')
+        chat_id = update.effective_user.id
+        user_id = get_user_id_by_chat_id(chat_id)
+
+        # Insert a new record into the search_requests table
+        add_search_request(user_id, doctor_id, selected_date)
+
+        query.edit_message_text("Поиск свободных талонов начат. Я буду сообщать вам о результате.")
+
+    except Exception as e:
+        logger.error("An error occurred in the search_for_available_slots function: %s", e)
 
 
 def button(update: Update, context: CallbackContext):
@@ -324,6 +364,7 @@ def button(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error("An error occurred in the button function: %s", e)
 
+
 def main() -> None:
     try:
         execute_sql()
@@ -343,12 +384,15 @@ def main() -> None:
         dispatcher.add_handler(CallbackQueryHandler(confirm_cancel_appointment, pattern=r'^confirm_cancel_'))
         dispatcher.add_handler(CallbackQueryHandler(cancel_cancel_operation, pattern=r'^rollback'))
         dispatcher.add_handler(CallbackQueryHandler(confirm_appointment_addition, pattern=r'^confirm_appointment'))
+        dispatcher.add_handler(CallbackQueryHandler(notify_selected_day, pattern=r'^notify'))
+        dispatcher.add_handler(CallbackQueryHandler(search_for_available_slots, pattern=r'^search_'))
 
         updater.start_polling()
 
         updater.idle()
     except Exception as e:
         logger.error("An error occurred in the main function: %s", e)
+
 
 if __name__ == '__main__':
     main()
