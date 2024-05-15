@@ -44,13 +44,18 @@ def execute_sql():
                 """)
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS medical_system.users (
-                id SERIAL PRIMARY KEY,
-                chat_id BIGINT NOT NULL UNIQUE,
-                username VARCHAR(255),
-                registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
+                    CREATE TABLE IF NOT EXISTS medical_system.users (
+                        id SERIAL PRIMARY KEY,
+                        chat_id BIGINT NOT NULL UNIQUE,
+                        username VARCHAR(255),
+                        first_name VARCHAR(255),
+                        last_name VARCHAR(255),
+                        patronymic VARCHAR(255),
+                        medical_policy VARCHAR(255),
+                        passport VARCHAR(255),
+                        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
         cur.execute("""
                             CREATE TABLE IF NOT EXISTS medical_system.hospitals (
                                 id SERIAL PRIMARY KEY,
@@ -175,14 +180,18 @@ def get_doctor_categories():
         raise
 
 
-def add_user(chat_id, username=None):
+def add_user(chat_id, username, first_name, last_name, patronymic, medical_policy, passport):
     try:
         conn = connect_to_database()
         cur = conn.cursor()
 
-        cur.execute(
-            "INSERT INTO medical_system.users (chat_id, username) VALUES (%s, %s) ON CONFLICT (chat_id) DO NOTHING",
-            (chat_id, username))
+        cur.execute("""
+            INSERT INTO medical_system.users (chat_id, username, first_name, last_name, patronymic, medical_policy, passport) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s) 
+            ON CONFLICT (chat_id) DO NOTHING
+            """,
+            (chat_id, username, first_name, last_name, patronymic, medical_policy, passport)
+        )
 
         conn.commit()
 
@@ -197,6 +206,21 @@ def add_user(chat_id, username=None):
         logger.error("Error adding user: %s", e)
         raise
 
+def user_exists(chat_id):
+    try:
+        conn = connect_to_database()
+        cur = conn.cursor()
+
+        cur.execute("SELECT id FROM medical_system.users WHERE chat_id = %s", (chat_id,))
+        user = cur.fetchone()
+
+        cur.close()
+        conn.close()
+
+        return user is not None
+    except psycopg2.Error as e:
+        logger.error("Error checking if user exists: %s", e)
+        raise
 
 def get_hospitals_by_category(category):
     try:

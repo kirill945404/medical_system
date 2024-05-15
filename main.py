@@ -1,15 +1,18 @@
 import logging
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler, \
+    ConversationHandler
 from db_utils import get_doctor_categories, execute_sql, add_user, get_hospitals_by_category, \
     get_doctors_by_category_and_hospital, get_doctor_info, get_hospital_info, add_appointment, get_user_id_by_chat_id, \
-    get_booked_hours, get_user_appointments_info, cancel_appointment_by_id, get_appointment_info, add_search_request
+    get_booked_hours, get_user_appointments_info, cancel_appointment_by_id, get_appointment_info, add_search_request, \
+    user_exists
 import datetime
 import holidays
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+FIRST_NAME, LAST_NAME, PATRONYMIC, MEDICAL_POLICY, PASSPORT = range(5)
 
 def main_menu_keyboard():
     icons = ["🔍"]  # Значки для кнопок "Поиск" и "Отказаться от записи"
@@ -21,19 +24,61 @@ def category_menu_keyboard(categories):
     return ReplyKeyboardMarkup([[category] for category in categories] + [["Назад"]], resize_keyboard=True)
 
 
-def start(update: Update, context: CallbackContext) -> None:
-    try:
-        chat_id = update.message.chat_id
-        username = update.message.from_user.username
-        add_user(chat_id, username)
+def start(update: Update, context: CallbackContext) -> int:
+    chat_id = update.message.chat_id
 
+    if user_exists(chat_id):
         update.message.reply_text(
-            'Привет! Я бот для записи к врачам. Нажми кнопку "Поиск" для возможности поиска талона для записи к врачу',
-            reply_markup=main_menu_keyboard())
-    except Exception as e:
-        logger.error("An error occurred in the start function: %s", e)
+            'Регистрация уже завершена. Нажмите кнопку "Поиск" для возможности поиска талона для записи к врачу.',
+            reply_markup=main_menu_keyboard()
+        )
+        return ConversationHandler.END
+    else:
+        update.message.reply_text('Привет! Я бот для записи к врачам. Пожалуйста, введите ваше имя:')
+        return FIRST_NAME
 
 
+
+def get_first_name(update: Update, context: CallbackContext) -> int:
+    context.user_data['first_name'] = update.message.text
+    update.message.reply_text('Введите вашу фамилию:')
+    return LAST_NAME
+
+
+def get_last_name(update: Update, context: CallbackContext) -> int:
+    context.user_data['last_name'] = update.message.text
+    update.message.reply_text('Введите ваше отчество:')
+    return PATRONYMIC
+
+
+def get_patronymic(update: Update, context: CallbackContext) -> int:
+    context.user_data['patronymic'] = update.message.text
+    update.message.reply_text('Введите ваш медицинский полис:')
+    return MEDICAL_POLICY
+
+
+def get_medical_policy(update: Update, context: CallbackContext) -> int:
+    context.user_data['medical_policy'] = update.message.text
+    update.message.reply_text('Введите ваш паспорт:')
+    return PASSPORT
+
+
+def get_passport(update: Update, context: CallbackContext) -> int:
+    context.user_data['passport'] = update.message.text
+    chat_id = update.message.chat_id
+    username = update.message.from_user.username
+    first_name = context.user_data['first_name']
+    last_name = context.user_data['last_name']
+    patronymic = context.user_data['patronymic']
+    medical_policy = context.user_data['medical_policy']
+    passport = context.user_data['passport']
+
+    add_user(chat_id, username, first_name, last_name, patronymic, medical_policy, passport)
+
+    update.message.reply_text(
+        'Регистрация завершена! Нажми кнопку "Поиск" для возможности поиска талона для записи к врачу',
+        reply_markup=main_menu_keyboard())
+    return ConversationHandler.END
 def search(update: Update, context: CallbackContext) -> None:
     try:
         if update.message.text == "🔍 Поиск":
@@ -278,8 +323,8 @@ def doctor_selected_day(update: Update, context: CallbackContext):
             # Если все часы забронированы, добавляем кнопку с уведомлением
             if len(booked_hours) == 6:
                 continue
-                inline_keyboard.append([InlineKeyboardButton(date.strftime('%d %B (нет свободных талонов)'),
-                                                             callback_data=f"notify_{date.strftime('%Y-%m-%d')}")])
+                #inline_keyboard.append([InlineKeyboardButton(date.strftime('%d %B (нет свободных талонов)'),
+                #                                             callback_data=f"notify_{date.strftime('%Y-%m-%d')}")])
             else:
                 inline_keyboard.append([InlineKeyboardButton(date.strftime('%d %B'),
                                                              callback_data=f"day_{date.strftime('%Y-%m-%d')}")])
@@ -373,7 +418,22 @@ def main() -> None:
 
         dispatcher = updater.dispatcher
 
-        # Добавляем обработчики команд, сообщений и колбэков
+        # Conversation handler for registration
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('start', start)],
+            states={
+                FIRST_NAME: [MessageHandler(Filters.text & ~Filters.command, get_first_name)],
+                LAST_NAME: [MessageHandler(Filters.text & ~Filters.command, get_last_name)],
+                PATRONYMIC: [MessageHandler(Filters.text & ~Filters.command, get_patronymic)],
+                MEDICAL_POLICY: [MessageHandler(Filters.text & ~Filters.command, get_medical_policy)],
+                PASSPORT: [MessageHandler(Filters.text & ~Filters.command, get_passport)],
+            },
+            fallbacks=[CommandHandler('cancel', cancel_cancel_operation)],
+        )
+
+        dispatcher.add_handler(conv_handler)
+
+        # Add existing handlers
         dispatcher.add_handler(CommandHandler("start", start))
         dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, search))
         dispatcher.add_handler(CallbackQueryHandler(button, pattern="hospital_"))
@@ -388,8 +448,8 @@ def main() -> None:
         dispatcher.add_handler(CallbackQueryHandler(search_for_available_slots, pattern=r'^search_'))
 
         updater.start_polling()
-
         updater.idle()
+
     except Exception as e:
         logger.error("An error occurred in the main function: %s", e)
 
