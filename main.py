@@ -1,13 +1,16 @@
 import logging
+
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler, \
     ConversationHandler
 from db_utils import get_doctor_categories, execute_sql, add_user, get_hospitals_by_category, \
     get_doctors_by_category_and_hospital, get_doctor_info, get_hospital_info, add_appointment, get_user_id_by_chat_id, \
     get_booked_hours, get_user_appointments_info, cancel_appointment_by_id, get_appointment_info, add_search_request, \
-    user_exists
+    user_exists, is_admin, get_doctors_list
 import datetime
 import holidays
+
+from validation import validate_name, validate_medical_policy, validate_passport
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,33 +41,57 @@ def start(update: Update, context: CallbackContext) -> int:
         return FIRST_NAME
 
 
-
 def get_first_name(update: Update, context: CallbackContext) -> int:
-    context.user_data['first_name'] = update.message.text
+    first_name = update.message.text
+    if not validate_name(first_name):
+        update.message.reply_text('Имя некорректно. Пожалуйста, введите ваше имя заново:')
+        return FIRST_NAME
+
+    context.user_data['first_name'] = first_name
     update.message.reply_text('Введите вашу фамилию:')
     return LAST_NAME
 
 
 def get_last_name(update: Update, context: CallbackContext) -> int:
-    context.user_data['last_name'] = update.message.text
+    last_name = update.message.text
+    if not validate_name(last_name):
+        update.message.reply_text('Фамилия некорректна. Пожалуйста, введите вашу фамилию заново:')
+        return LAST_NAME
+
+    context.user_data['last_name'] = last_name
     update.message.reply_text('Введите ваше отчество:')
     return PATRONYMIC
 
 
 def get_patronymic(update: Update, context: CallbackContext) -> int:
-    context.user_data['patronymic'] = update.message.text
+    patronymic = update.message.text
+    if not validate_name(patronymic):
+        update.message.reply_text('Отчество некорректно. Пожалуйста, введите ваше отчество заново:')
+        return PATRONYMIC
+
+    context.user_data['patronymic'] = patronymic
     update.message.reply_text('Введите ваш медицинский полис:')
     return MEDICAL_POLICY
 
 
 def get_medical_policy(update: Update, context: CallbackContext) -> int:
-    context.user_data['medical_policy'] = update.message.text
+    medical_policy = update.message.text
+    if not validate_medical_policy(medical_policy):
+        update.message.reply_text('Медицинский полис некорректен. Пожалуйста, введите ваш медицинский полис заново:')
+        return MEDICAL_POLICY
+
+    context.user_data['medical_policy'] = medical_policy
     update.message.reply_text('Введите ваш паспорт:')
     return PASSPORT
 
 
 def get_passport(update: Update, context: CallbackContext) -> int:
-    context.user_data['passport'] = update.message.text
+    passport = update.message.text
+    if not validate_passport(passport):
+        update.message.reply_text('Паспорт некорректен. Пожалуйста, введите ваш паспорт заново:')
+        return PASSPORT
+
+    context.user_data['passport'] = passport
     chat_id = update.message.chat_id
     username = update.message.from_user.username
     first_name = context.user_data['first_name']
@@ -79,6 +106,29 @@ def get_passport(update: Update, context: CallbackContext) -> int:
         'Регистрация завершена! Нажми кнопку "Поиск" для возможности поиска талона для записи к врачу',
         reply_markup=main_menu_keyboard())
     return ConversationHandler.END
+
+def give_list_doctors(update: Update, context: CallbackContext) -> int:
+    chat_id = update.message.chat_id
+    if not is_admin(chat_id):
+        update.message.reply_text('У вас не хватает прав для выполнения данной команды.')
+        return ConversationHandler.END
+    doctors_info = get_doctors_list()
+    if not doctors_info:
+        update.message.reply_text("В базе данных нет врачей.")
+    else:
+        message_text = "Список врачей:"
+        for doctor_info in doctors_info:
+            doctor_id = doctor_info[0]
+            first_name = doctor_info[1]
+            last_name = doctor_info[2]
+            patronymic = doctor_info[3]
+            hospital_name = doctor_info[4]
+            category_name = doctor_info[5]
+            hospital_id = doctor_info[6]
+            category_id = doctor_info[7]
+            message_text += f"\nid:{doctor_id}, ФИО:{first_name} {last_name} {patronymic},место работы:{hospital_name}({hospital_id}),категория:{category_name}({category_id})"
+        update.message.reply_text(message_text)
+
 def search(update: Update, context: CallbackContext) -> None:
     try:
         if update.message.text == "🔍 Поиск":
@@ -115,6 +165,7 @@ def search(update: Update, context: CallbackContext) -> None:
                 update.message.reply_text('К сожалению, не нашлось медицинских учреждений с врачами выбранной вами '
                                           'категории')
                 return
+
 
             # Сохраняем выбранную категорию в контексте пользователя
             context.user_data['selected_category'] = update.message.text
@@ -435,6 +486,7 @@ def main() -> None:
 
         # Add existing handlers
         dispatcher.add_handler(CommandHandler("start", start))
+        dispatcher.add_handler(CommandHandler("listdoctors", give_list_doctors))
         dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, search))
         dispatcher.add_handler(CallbackQueryHandler(button, pattern="hospital_"))
         dispatcher.add_handler(CallbackQueryHandler(doctor_selected_day, pattern=r'^doctor_'))

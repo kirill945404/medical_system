@@ -6,6 +6,31 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def is_admin(chat_id):
+    user_id = get_user_id_by_chat_id(chat_id)
+    if not user_id:
+        return False
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("SELECT role FROM medical_system.users WHERE id = %s", (user_id,))
+    role = cur.fetchone()
+    cur.close()
+    conn.close()
+    return role and role[0] == "admin"
+
+def get_doctors_list():
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("SELECT doc.id, doc.first_name, doc.last_name, doc.patronymic, hospitals.name, dc.category,doc.category_id,doc.hospital_id "
+                "FROM medical_system.doctors doc "
+                "JOIN medical_system.hospitals ON doc.hospital_id = hospitals.id "
+                "JOIN medical_system.doctor_categories dc ON doc.category_id = dc.id;")
+    doctors_info = cur.fetchall()
+    cur.close()
+    conn.close()
+    return doctors_info
+
+
 
 def connect_to_database():
     try:
@@ -31,31 +56,32 @@ def execute_sql():
                 category VARCHAR(255) NOT NULL
             );
         """)
-        cur.execute("""
-                    CREATE TABLE IF NOT EXISTS medical_system.search_requests (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER NOT NULL,
-                    doctor_id INTEGER NOT NULL,
-                    search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    completed BOOLEAN DEFAULT FALSE,
-                    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    modified TIMESTAMP
-                );
-                """)
+        #cur.execute("""
+         #           CREATE TABLE IF NOT EXISTS medical_system.search_requests (
+          #          id SERIAL PRIMARY KEY,
+           #         user_id INTEGER NOT NULL,
+            #        doctor_id INTEGER NOT NULL,
+             #       search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              #      completed BOOLEAN DEFAULT FALSE,
+               #     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                #    modified TIMESTAMP
+                #);
+                #""")
 
         cur.execute("""
-                    CREATE TABLE IF NOT EXISTS medical_system.users (
-                        id SERIAL PRIMARY KEY,
-                        chat_id BIGINT NOT NULL UNIQUE,
-                        username VARCHAR(255),
-                        first_name VARCHAR(255),
-                        last_name VARCHAR(255),
-                        patronymic VARCHAR(255),
-                        medical_policy VARCHAR(255),
-                        passport VARCHAR(255),
-                        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
+            CREATE TABLE IF NOT EXISTS medical_system.users (
+                id SERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL UNIQUE,
+                username VARCHAR(255),
+                first_name VARCHAR(255),
+                last_name VARCHAR(255),
+                patronymic VARCHAR(255),
+                medical_policy VARCHAR(255),
+                passport VARCHAR(255),
+                registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                role VARCHAR(10) DEFAULT 'user' CHECK (role IN ('admin', 'user'))
+            );
+        """)
         cur.execute("""
                             CREATE TABLE IF NOT EXISTS medical_system.hospitals (
                                 id SERIAL PRIMARY KEY,
